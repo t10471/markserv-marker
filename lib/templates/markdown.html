@@ -99,6 +99,49 @@
 	var maxRetries = 20;
 	var retries = 0;
 
+	// A push replaces the content, and the comment forms and the editor live
+	// inside it, so one arriving mid-sentence takes the caret, an IME
+	// composition in progress and the reader's scroll position with it.
+	// keptAcrossRender in comments.js spares those elements on a re-render,
+	// but it never gets the chance here — the swap below is what destroys
+	// them. So while the reader is writing, the push is held and applied once
+	// they leave the field. Only the newest is kept: each carries the whole
+	// page, so an older one has nothing left to say.
+	var held = null;
+	var heldComments = false;
+
+	function writing() {
+		var node = document.activeElement;
+		if (!node || !node.closest) return false;
+		if (node.tagName !== 'TEXTAREA' && node.tagName !== 'INPUT') return false;
+		return !!node.closest('[data-marker-ui]');
+	}
+
+	function applyReload(html) {
+		var el = document.getElementById('marker-content');
+		if (el) el.innerHTML = html;
+		document.dispatchEvent(new CustomEvent('marker:reload'));
+	}
+
+	function flush() {
+		if (held !== null) {
+			var html = held;
+			held = null;
+			heldComments = false;
+			applyReload(html);
+			return;
+		}
+		if (heldComments) {
+			heldComments = false;
+			document.dispatchEvent(new CustomEvent('marker:comments'));
+		}
+	}
+
+	// focusout runs before the next field takes focus, so decide a tick later
+	document.addEventListener('focusout', function() {
+		setTimeout(function() { if (!writing()) flush(); }, 0);
+	});
+
 	function connect() {
 		ws = new WebSocket('ws://localhost:{{wsPort}}');
 		ws.onopen = function() {
@@ -115,10 +158,10 @@
 			var msg;
 			try { msg = JSON.parse(e.data); } catch (err) { return; }
 			if (msg.type === 'reload') {
-				var el = document.getElementById('marker-content');
-				if (el) el.innerHTML = msg.html;
-				document.dispatchEvent(new CustomEvent('marker:reload'));
+				if (writing()) { held = msg.html; return; }
+				applyReload(msg.html);
 			} else if (msg.type === 'comments') {
+				if (writing()) { heldComments = true; return; }
 				document.dispatchEvent(new CustomEvent('marker:comments'));
 			}
 		};

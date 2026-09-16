@@ -156,6 +156,38 @@ test.serial('comment pushes reach a viewer browsing through a directory registra
 	t.is(message.fileId, fileReg.id)
 })
 
+test.serial('a change to another file under the same root leaves a viewer alone', async t => {
+	const {reg} = registry.register(path.join(dirA, 'a.md'))
+	fs.writeFileSync(path.join(dirA, 'sibling.md'), '# sibling v1\n')
+
+	let redrawn = false
+	listenFor(reg.urlPath, message => {
+		if (message.type === 'reload') {
+			redrawn = true
+		}
+
+		return false
+	}, 1500).catch(() => {})
+
+	await settle(300)
+	fs.writeFileSync(path.join(dirA, 'sibling.md'), '# sibling v2\n')
+	await settle(1000)
+
+	t.false(redrawn)
+})
+
+test.serial('a directory listing redraws when one of its entries changes', async t => {
+	const {reg} = registry.register(dirA)
+
+	const waiting = listenFor(`/f/${reg.id}/`, message => message.type === 'reload')
+	await settle(300)
+
+	fs.writeFileSync(path.join(dirA, 'a.md'), '# A v4\n')
+
+	const message = await waiting
+	t.true(message.html.includes('isfolder'))
+})
+
 test.serial('registrations in different directories reload independently', async t => {
 	const {reg: regB} = registry.register(path.join(dirB, 'b.md'))
 
